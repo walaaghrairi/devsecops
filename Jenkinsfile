@@ -216,5 +216,5 @@ stage('Acceptance - Ansible Infrastructure Verification') {
 
 
 
-    }
+    
 }
