@@ -71,7 +71,7 @@ stage('SAST - SpotBugs') {
             steps {
                 sh 'mvn -B -DskipTests=true package'
     }
-}
+
 stage('SonarQube Analysis') {
     steps {
         withSonarQubeEnv('SonarQube') {
