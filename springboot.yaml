@@ -1,0 +1,27 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: springboot-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: springboot
+  template:
+    metadata:
+      labels:
+        app: springboot
+    spec:
+      containers:
+      - name: springboot
+        image: springboot-app:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8089
+        env:
+        - name: SPRING_DATASOURCE_URL
+          value: jdbc:mysql://mysql-service:3306/studentdb
+        - name: SPRING_DATASOURCE_USERNAME
+          value: springuser
+        - name: SPRING_DATASOURCE_PASSWORD
+          value: springpass
