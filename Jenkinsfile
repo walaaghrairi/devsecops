@@ -1,10 +1,8 @@
 pipeline {
     agent any
-     environment {
-        SONARQUBE_URL = 'http://localhost:9000'
-        SONARQUBE_TOKEN = credentials('SonarQube')
-        DOCKER_IMAGE = "walaaeddine/devsecops"
-    }
+    environment {
+    DOCKER_IMAGE = "walaaeddine/devsecops"
+}
 
     triggers {
         githubPush()
@@ -76,23 +74,16 @@ stage('SAST - SpotBugs') {
 }
 stage('SonarQube Analysis') {
     steps {
-        withCredentials([string(
-            credentialsId: 'SonarQube',
-            variable: 'SONARQUBE_TOKEN'
-        )]) {
+        withSonarQubeEnv('SonarQube') {
             sh '''
-                set +x
-
-                mvn org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar \
-                -Dsonar.projectKey=student-management \
-                -Dsonar.host.url=http://localhost:9000 \
-                -Dsonar.token="$SONARQUBE_TOKEN" \
+                mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:5.1.0.4751:sonar \
+                -Dsonar.projectKey=devsecops \
+                -Dsonar.projectName=DevSecOps \
                 -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
             '''
         }
     }
-}
-        stage('Build Docker Image') {
+}        stage('Build Docker Image') {
             steps {
                 sh 'docker build -t $DOCKER_IMAGE:latest .'
             }
