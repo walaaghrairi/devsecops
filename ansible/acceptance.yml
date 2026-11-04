@@ -1,0 +1,33 @@
+---
+- name: Acceptance - Infrastructure Verification
+  hosts: local
+  gather_facts: false
+
+  tasks:
+    - name: Check Docker service
+      command: docker info
+      changed_when: false
+
+    - name: Check Student Management container
+      command: docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' student-management
+      register: app_status
+      changed_when: false
+
+    - name: Verify application is running
+      assert:
+        that:
+          - app_status.stdout == "true"
+        fail_msg: "Student Management container is not running."
+        success_msg: "Student Management container is running."
+
+    - name: Check MySQL container
+      command: docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' mysql-service
+      register: mysql_status
+      changed_when: false
+
+    - name: Verify MySQL is running
+      assert:
+        that:
+          - mysql_status.stdout == "true"
+        fail_msg: "MySQL container is not running."
+        success_msg: "MySQL container is running."
