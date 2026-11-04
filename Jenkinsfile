@@ -213,9 +213,9 @@ pipeline {
         }
 
         stage('Acceptance - Ansible Infrastructure Verification') {
-            steps {
-                sh '''
-                    set -o pipefail
+    steps {
+        sh '''
+            set -e
 
                     mkdir -p "$WORKSPACE/reports"
 
