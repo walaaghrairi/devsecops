@@ -35,7 +35,7 @@ pipeline {
                             -v "$WORKSPACE:/repo" \
                             -w /repo \
                             python:3.12 \
-                            sh -c "pip install --quiet --no-cache-dir pre-commit && pre-commit run --all-files --show-diff-on-failure"
+                            sh -c "command -v git >/dev/null || { apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null; }; git config --global --add safe.directory /repo; pip install --quiet --no-cache-dir pre-commit; pre-commit run --all-files --show-diff-on-failure"
                     fi
                 '''
             }
