@@ -19,6 +19,23 @@ pipeline {
             }
         }
 
+        // Pre-commit control, enforced in CI: the same hooks developers install
+        // locally via `pre-commit install` are re-run here against the whole tree.
+        // A committed secret fails the build before anything is compiled or shipped.
+        stage('Pre-Commit Controls (Secret Scan)') {
+            steps {
+                sh '''
+                    if ! command -v pre-commit >/dev/null 2>&1; then
+                        python3 -m venv /tmp/precommit-venv
+                        . /tmp/precommit-venv/bin/activate
+                        pip install --quiet --upgrade pip pre-commit
+                    fi
+
+                    pre-commit run --all-files --show-diff-on-failure
+                '''
+            }
+        }
+
         stage('Affichage de la date système') {
             steps {
                 sh 'date'
@@ -105,6 +122,11 @@ pipeline {
         stage('Trivy Vulnerability Scan') {
             steps {
                 sh '''
+                    # Keep the console readable: no progress bars, and reuse the
+                    # vulnerability/Java DBs across builds instead of re-downloading.
+                    export TRIVY_NO_PROGRESS=true
+                    export TRIVY_CACHE_DIR="${TRIVY_CACHE_DIR:-$HOME/.cache/trivy}"
+
                     mkdir -p reports
 
                     curl -fsSL \
@@ -151,7 +173,7 @@ pipeline {
                     usernamePassword(
                         credentialsId: '123456789',
                         usernameVariable: 'DOCKER_USER',
-                        passwordVariable: 'DOCKER_PASS'
+                        passwordVariable: 'DOCKER_PASS'  // pragma: allowlist secret (credential variable name, not a secret)
                     )
                 ]) {
                     sh '''

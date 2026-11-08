@@ -1,0 +1,10 @@
+# Pre-commit controls: run `pre-commit install` once, then the hooks below run
+# before every commit and block it if a secret is detected.
+#
+# Manual full scan:  pre-commit run --all-files
+# CI equivalent:     pre-commit run --all-files --show-diff-on-failure
+repos:
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets

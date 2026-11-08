@@ -17,6 +17,9 @@ services:
     image: walaaeddine/devsecops:latest
     container_name: student-management
     restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
     ports:
       - "8089:8089"
     depends_on:
