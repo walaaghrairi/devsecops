@@ -25,13 +25,18 @@ pipeline {
         stage('Pre-Commit Controls (Secret Scan)') {
             steps {
                 sh '''
-                    if ! command -v pre-commit >/dev/null 2>&1; then
-                        python3 -m venv /tmp/precommit-venv
-                        . /tmp/precommit-venv/bin/activate
-                        pip install --quiet --upgrade pip pre-commit
+                    if command -v pre-commit >/dev/null 2>&1; then
+                        pre-commit run --all-files --show-diff-on-failure
+                    else
+                        # This agent has no python3-venv/ensurepip, so run the very
+                        # same hooks in a container rather than installing packages
+                        # on the host. The image tag also pins the scanner version.
+                        docker run --rm \
+                            -v "$WORKSPACE:/repo" \
+                            -w /repo \
+                            python:3.12 \
+                            sh -c "pip install --quiet --no-cache-dir pre-commit && pre-commit run --all-files --show-diff-on-failure"
                     fi
-
-                    pre-commit run --all-files --show-diff-on-failure
                 '''
             }
         }
