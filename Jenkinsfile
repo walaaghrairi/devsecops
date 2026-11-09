@@ -12,7 +12,7 @@ pipeline {
     parameters {
         string(
             name: 'NOTIFY_TO',
-            defaultValue: '',
+            defaultValue: 'walikghrairi@gmail.com',
             description: 'Address that receives the build summary email. Leave empty to disable notification.'
         )
     }
