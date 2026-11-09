@@ -196,6 +196,64 @@ pipeline {
             }
         }
 
+        stage('Secrets Management - Production Check') {
+            steps {
+                sh '''
+                    set -eu
+
+                    ENV_FILE=/opt/student-management/.env
+                    REQUIRED_KEYS="MYSQL_USER MYSQL_PASSWORD"
+
+                    echo "== Secrets management check =="
+                    echo "   credential source: $ENV_FILE"
+
+                    if [ ! -r "$ENV_FILE" ]; then
+                        echo "   FAIL: $ENV_FILE is missing or unreadable, so production credentials have no source."
+                        exit 1
+                    fi
+
+                    missing=""
+                    for key in $REQUIRED_KEYS; do
+                        if grep -qE "^${key}=" "$ENV_FILE"; then
+                            echo "   present: $key"
+                        else
+                            echo "   MISSING: $key"
+                            missing="$missing $key"
+                        fi
+                    done
+
+                    if [ -n "$missing" ]; then
+                        echo "   FAIL: required keys are absent from $ENV_FILE:$missing"
+                        exit 1
+                    fi
+
+                    # Compare the live values against the tracked tree. Only file
+                    # names are reported, so the check never prints a secret.
+                    leaks=0
+                    for key in $REQUIRED_KEYS; do
+                        value=$(grep -E "^${key}=" "$ENV_FILE" | head -n 1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+                        if [ "${#value}" -lt 4 ]; then
+                            echo "   skipped value check for $key (empty or too short to be meaningful)"
+                            continue
+                        fi
+                        hits=$(git grep -l -F -e "$value" -- . 2>/dev/null || true)
+                        if [ -n "$hits" ]; then
+                            leaks=$((leaks + 1))
+                            echo "   LEAK: the value of $key is hardcoded in these tracked files:"
+                            echo "$hits" | sed 's/^/      /'
+                        fi
+                    done
+
+                    if [ "$leaks" -ne 0 ]; then
+                        echo "   FAIL: credentials must live only in the credential source, never in tracked files."
+                        exit 1
+                    fi
+
+                    echo "   PASS: every required key is set and no tracked file contains its value."
+                '''
+            }
+        }
+
         stage('Deploy Application with Docker Compose') {
             steps {
                 sh '''
