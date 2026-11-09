@@ -225,10 +225,13 @@ pipeline {
 
                     # A running container is not a working application: wait until the
                     # staging app actually answers a request before asserting anything.
-                    echo "   waiting for the staging app to answer (up to 240s; the first run also initialises its database)"
+                    # The app serves under the /student context path set in
+                    # application.properties, so the probe has to include it.
+                    APP_URL="http://127.0.0.1:$APP_PORT/student/students/getAllStudents"
+                    echo "   waiting for $APP_URL (up to 240s; the first run also initialises its database)"
                     waited=0
                     while [ "$waited" -lt 240 ]; do
-                        if curl -fsS -o /dev/null "http://127.0.0.1:$APP_PORT/students/getAllStudents" 2>/dev/null; then
+                        if curl -fsS -o /dev/null "$APP_URL" 2>/dev/null; then
                             break
                         fi
                         sleep 2
