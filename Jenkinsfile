@@ -208,7 +208,11 @@ pipeline {
                     PROJECT=pipeline-acceptance
                     export APP_CONTAINER_NAME=acceptance-student-management
                     export MYSQL_CONTAINER_NAME=acceptance-mysql-service
+                    export BLACKBOX_CONTAINER_NAME=acceptance-blackbox-exporter
                     export APP_PORT=8090
+                    # Host ports are global, so the staging monitor cannot reuse
+                    # the one production already publishes.
+                    export BLACKBOX_PORT=9116
 
                     mkdir -p "$WORKSPACE/reports"
 
@@ -447,6 +451,85 @@ pipeline {
                         -f "$WORKSPACE/docker-compose.yml" \
                         logs --tail=50
                 '''
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // PHASE 5 - OPERATIONS
+        // The release is live, so the question changes from "is it correct?" to
+        // "is it still serving?". blackbox-exporter probes the running
+        // application from inside the compose network and reports the outcome
+        // phase by phase (DNS, connect, first byte, status code).
+        // ------------------------------------------------------------------
+        stage('Operations - Continuous Monitoring (Blackbox)') {
+            steps {
+                sh '''
+                    set -eu
+
+                    ENV_FILE=/opt/student-management/.env
+                    COMPOSE_FILE="$WORKSPACE/docker-compose.yml"
+                    SNAPSHOT="$WORKSPACE/reports/monitoring-probe.txt"
+                    MONITOR="${BLACKBOX_PROBE_URL:-http://127.0.0.1:9115}"
+
+                    # Addressed by service name on the compose network, so the same
+                    # target is correct for the production stack and for staging.
+                    TARGET="http://app:8089/student/students/getAllStudents"
+
+                    mkdir -p "$WORKSPACE/reports"
+
+                    echo "== Operations: continuous monitoring =="
+                    echo "   monitor: $MONITOR (blackbox-exporter)"
+                    echo "   target:  $TARGET"
+
+                    # The monitor is part of the stack; start it in case the deploy
+                    # stage only brought up the application.
+                    docker compose \
+                        --env-file "$ENV_FILE" \
+                        -f "$COMPOSE_FILE" \
+                        up -d blackbox
+
+                    probe() {
+                        curl -fsS -G "$MONITOR/probe" \
+                            --data-urlencode "target=$TARGET" \
+                            --data-urlencode "module=http_2xx" 2>/dev/null
+                    }
+
+                    waited=0
+                    while [ "$waited" -lt 120 ]; do
+                        if probe | tee "$SNAPSHOT" | grep -q '^probe_success 1$'; then
+                            break
+                        fi
+                        sleep 2
+                        waited=$((waited + 2))
+                    done
+
+                    if ! grep -q '^probe_success 1$' "$SNAPSHOT" 2>/dev/null; then
+                        echo "   FAIL: the monitor could not confirm the application is serving (120s)."
+                        echo "   last probe output:"
+                        sed 's/^/      /' "$SNAPSHOT" 2>/dev/null || true
+                        docker compose \
+                            --env-file "$ENV_FILE" \
+                            -f "$COMPOSE_FILE" \
+                            logs --tail=20 blackbox || true
+                        exit 1
+                    fi
+
+                    echo "   monitored target answered after ${waited}s"
+                    grep -E '^probe_(success|http_status_code|duration_seconds|ip_protocol) ' "$SNAPSHOT" \
+                        | sed 's/^/      /' || true
+
+                    echo "   PASS: the deployed application answered a live monitoring probe."
+                '''
+            }
+
+            post {
+                always {
+                    archiveArtifacts(
+                        artifacts: 'reports/monitoring-probe.txt',
+                        allowEmptyArchive: true,
+                        fingerprint: true
+                    )
+                }
             }
         }
     }

@@ -34,6 +34,24 @@ services:
     networks:
       - student-network
 
+  # OPERATIONS phase: blackbox-exporter probes the application over the compose
+  # network every time the pipeline asks it to, and can be pointed at a different
+  # target per request, so it monitors production and staging alike.
+  blackbox:
+    image: prom/blackbox-exporter:v0.25.0
+    container_name: ${BLACKBOX_CONTAINER_NAME:-blackbox-exporter}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/blackbox/blackbox.yml
+    volumes:
+      - ./monitoring/blackbox.yml:/etc/blackbox/blackbox.yml:ro
+    ports:
+      - "${BLACKBOX_PORT:-9115}:9115"
+    depends_on:
+      - app
+    networks:
+      - student-network
+
 volumes:
   mysql_data:
 

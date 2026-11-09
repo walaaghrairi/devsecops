@@ -1,0 +1,13 @@
+# Probes used by the blackbox-exporter container.
+#
+# One module: an HTTP probe that succeeds on a 2xx/3xx response. The target is
+# supplied per request by the Operations stage, so the same monitor watches the
+# production stack and any staging stack.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 10s
+    http:
+      preferred_ip_protocol: ip4
+      valid_status_codes: [200]
+      method: GET
