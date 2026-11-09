@@ -21,7 +21,15 @@ spec:
         env:
         - name: SPRING_DATASOURCE_URL
           value: jdbc:mysql://mysql-service:3306/studentdb
+        # Credentials come from the mysql-credentials Secret; see
+        # mysql-secret.example.yaml for how it is created.
         - name: SPRING_DATASOURCE_USERNAME
-          value: springuser
+          valueFrom:
+            secretKeyRef:
+              name: mysql-credentials
+              key: mysql-user
         - name: SPRING_DATASOURCE_PASSWORD
-          value: springpass
+          valueFrom:
+            secretKeyRef:
+              name: mysql-credentials
+              key: mysql-password

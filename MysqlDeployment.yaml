@@ -18,14 +18,25 @@ spec:
             - containerPort: 3306
 
           env:
+            # Credentials come from the mysql-credentials Secret; see
+            # mysql-secret.example.yaml for how it is created.
             - name: MYSQL_ROOT_PASSWORD
-              value: root
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-root-password
             - name: MYSQL_DATABASE
               value: studentdb
             - name: MYSQL_USER
-              value: springuser
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-user
             - name: MYSQL_PASSWORD
-              value: springpass
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-credentials
+                  key: mysql-password
 
           volumeMounts:
             - name: mysql-storage
