@@ -3,13 +3,19 @@
   hosts: local
   gather_facts: false
 
+  vars:
+    # Production names by default. The acceptance stage overrides both with -e so
+    # the same playbook verifies the staging stack before anything is released.
+    app_container: student-management
+    mysql_container: mysql-service
+
   tasks:
     - name: Check Docker service
       command: docker info
       changed_when: false
 
-    - name: Check Student Management container
-      command: docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' student-management
+    - name: Check app container
+      command: docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' {{ app_container }}
       register: app_status
       changed_when: false
 
@@ -17,11 +23,11 @@
       assert:
         that:
           - app_status.stdout == "true"
-        fail_msg: "Student Management container is not running."
-        success_msg: "Student Management container is running."
+        fail_msg: "Container {{ app_container }} is not running."
+        success_msg: "Container {{ app_container }} is running."
 
     - name: Check MySQL container
-      command: docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' mysql-service
+      command: docker inspect -f '{{ "{{" }}.State.Running{{ "}}" }}' {{ mysql_container }}
       register: mysql_status
       changed_when: false
 
@@ -29,5 +35,5 @@
       assert:
         that:
           - mysql_status.stdout == "true"
-        fail_msg: "MySQL container is not running."
-        success_msg: "MySQL container is running."
+        fail_msg: "Container {{ mysql_container }} is not running."
+        success_msg: "Container {{ mysql_container }} is running."

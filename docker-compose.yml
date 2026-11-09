@@ -1,7 +1,9 @@
 services:
   mysql:
     image: mysql:8.0
-    container_name: mysql-service
+    # Defaults are the production names. The acceptance stage exports its own
+    # values so a staging stack can run beside production on the same host.
+    container_name: ${MYSQL_CONTAINER_NAME:-mysql-service}
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
@@ -15,13 +17,13 @@ services:
 
   app:
     image: walaaeddine/devsecops:latest
-    container_name: student-management
+    container_name: ${APP_CONTAINER_NAME:-student-management}
     restart: unless-stopped
     environment:
       SPRING_DATASOURCE_USERNAME: ${MYSQL_USER}
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
     ports:
-      - "8089:8089"
+      - "${APP_PORT:-8089}:8089"
     depends_on:
       - mysql
     networks:

@@ -1,4 +1,3 @@
-
 pipeline {
     agent any
 
@@ -18,6 +17,17 @@ pipeline {
                 echo 'Code source récupéré avec succès.'
             }
         }
+
+        stage('Affichage de la date système') {
+            steps {
+                sh 'date'
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // PHASE 1 - PRE-COMMIT
+        // Hooks a developer runs before the code ever reaches the repository.
+        // ------------------------------------------------------------------
 
         // Pre-commit control, enforced in CI: the same hooks developers install
         // locally via `pre-commit install` are re-run here against the whole tree.
@@ -41,15 +51,23 @@ pipeline {
             }
         }
 
-        stage('Affichage de la date système') {
-            steps {
-                sh 'date'
-            }
-        }
+        // ------------------------------------------------------------------
+        // PHASE 2 - COMMIT / CI
+        // Everything that inspects or builds the artifact. Nothing is published
+        // or deployed from this phase.
+        // ------------------------------------------------------------------
 
         stage('Clean') {
             steps {
                 sh 'mvn -B clean'
+            }
+        }
+
+        // Compile first: a build that cannot compile should fail in seconds, before
+        // the slower analysers run.
+        stage('Compile') {
+            steps {
+                sh 'mvn -B -DskipTests=true compile'
             }
         }
 
@@ -78,12 +96,7 @@ pipeline {
             }
         }
 
-        stage('Compile') {
-            steps {
-                sh 'mvn -B -DskipTests=true compile'
-            }
-        }
-
+        // SAST needs the classes Compile just produced.
         stage('SAST - SpotBugs') {
             steps {
                 sh 'mvn -B spotbugs:spotbugs'
@@ -99,12 +112,8 @@ pipeline {
             }
         }
 
-        stage('Package') {
-            steps {
-                sh 'mvn -B -DskipTests=true package'
-            }
-        }
-
+        // SonarQube analyses target/classes, so it belongs after Compile and before
+        // the artifact is packaged.
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {
@@ -115,6 +124,12 @@ pipeline {
                             -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml
                     '''
                 }
+            }
+        }
+
+        stage('Package') {
+            steps {
+                sh 'mvn -B -DskipTests=true package'
             }
         }
 
@@ -171,6 +186,141 @@ pipeline {
                 )
             }
         }
+
+        // ------------------------------------------------------------------
+        // PHASE 3 - ACCEPTANCE
+        // The build is accepted here, on a throwaway staging stack, BEFORE the
+        // image is published or deployed. Nothing in this phase touches the
+        // production containers: the stack runs under its own compose project,
+        // container names, port and volume, courtesy of the ${...:-default}
+        // values in docker-compose.yml.
+        // ------------------------------------------------------------------
+        stage('Acceptance - Staging Deployment & Verification') {
+            steps {
+                sh '''
+                    set -eu
+
+                    ENV_FILE=/opt/student-management/.env
+                    COMPOSE_FILE="$WORKSPACE/docker-compose.yml"
+                    PLAYBOOK_DIR="$WORKSPACE/ansible"
+                    REPORT="$WORKSPACE/reports/ansible-acceptance-report.txt"
+
+                    PROJECT=pipeline-acceptance
+                    export APP_CONTAINER_NAME=acceptance-student-management
+                    export MYSQL_CONTAINER_NAME=acceptance-mysql-service
+                    export APP_PORT=8090
+
+                    mkdir -p "$WORKSPACE/reports"
+
+                    compose() {
+                        docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"
+                    }
+
+                    echo "== Acceptance: staging stack =="
+                    echo "   project:  $PROJECT"
+                    echo "   app:      $APP_CONTAINER_NAME on port $APP_PORT"
+                    echo "   database: $MYSQL_CONTAINER_NAME (separate volume; production untouched)"
+
+                    compose up -d --no-build
+
+                    # A running container is not a working application: wait until the
+                    # staging app actually answers a request before asserting anything.
+                    echo "   waiting for the staging app to answer (up to 240s; the first run also initialises its database)"
+                    waited=0
+                    while [ "$waited" -lt 240 ]; do
+                        if curl -fsS -o /dev/null "http://127.0.0.1:$APP_PORT/students/getAllStudents" 2>/dev/null; then
+                            break
+                        fi
+                        sleep 2
+                        waited=$((waited + 2))
+                    done
+
+                    if [ "$waited" -ge 240 ]; then
+                        echo "   FAIL: the staging application did not answer within 240s."
+                        compose ps || true
+                        compose logs --tail=80 || true
+                        exit 1
+                    fi
+
+                    echo "   staging application answered after ${waited}s"
+
+                    EXTRA_ARGS="-e app_container=$APP_CONTAINER_NAME -e mysql_container=$MYSQL_CONTAINER_NAME"
+
+                    # Prefer a native ansible-playbook. Until it is installed on the
+                    # agent, run the same playbook in a container and hand it the host's
+                    # Docker CLI and socket, so `docker info` and `docker inspect` still
+                    # see the containers docker compose just created.
+                    if command -v ansible-playbook >/dev/null 2>&1; then
+                        echo "   ansible: $(ansible-playbook --version | head -n 1)"
+                        if ( cd "$PLAYBOOK_DIR" && ansible-playbook -i inventory.ini acceptance.yml $EXTRA_ARGS ) > "$REPORT" 2>&1; then
+                            status=0
+                        else
+                            status=$?
+                        fi
+                    else
+                        DOCKER_BIN=$(command -v docker || true)
+                        DOCKER_BIN=$(readlink -f "${DOCKER_BIN:-/nonexistent}" 2>/dev/null || true)
+                        if [ -z "$DOCKER_BIN" ] || [ ! -x "$DOCKER_BIN" ]; then
+                            msg="FAIL: ansible-playbook is not installed and no docker CLI is available to fall back to."
+                            echo "$msg" > "$REPORT"
+                            echo "$msg"
+                            exit 1
+                        fi
+                        echo "   ansible-playbook not on the agent; running the playbook in python:3.12"
+                        if docker run --rm \
+                                -v "$PLAYBOOK_DIR:/work" \
+                                -w /work \
+                                -e HOME=/tmp \
+                                -e EXTRA_ARGS="$EXTRA_ARGS" \
+                                -v /var/run/docker.sock:/var/run/docker.sock \
+                                -v "$DOCKER_BIN:/usr/bin/docker:ro" \
+                                python:3.12 \
+                                sh -c 'pip install --quiet --no-cache-dir "ansible-core>=2.16,<2.19" && ansible-playbook -i inventory.ini acceptance.yml $EXTRA_ARGS' \
+                                > "$REPORT" 2>&1; then
+                            status=0
+                        else
+                            status=$?
+                        fi
+                    fi
+
+                    echo "---- acceptance report ----"
+                    cat "$REPORT"
+                    echo "---------------------------"
+
+                    if [ "$status" -ne 0 ]; then
+                        echo "FAIL: acceptance verification failed (exit $status). See the report above."
+                        exit "$status"
+                    fi
+
+                    echo "   PASS: the staging stack passed every acceptance assertion."
+                '''
+            }
+
+            post {
+                always {
+                    sh '''
+                        # Tear the staging stack down either way. The named volume is
+                        # kept so later builds start against an already-initialised
+                        # database instead of re-running MySQL's first-time setup.
+                        docker compose -p pipeline-acceptance \
+                            --env-file /opt/student-management/.env \
+                            -f "$WORKSPACE/docker-compose.yml" \
+                            down || true
+                    '''
+                    archiveArtifacts(
+                        artifacts: 'reports/ansible-acceptance-report.txt',
+                        allowEmptyArchive: true,
+                        fingerprint: true
+                    )
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // PHASE 4 - PRODUCTION
+        // Publication and deployment. Everything that can reject the release has
+        // already run.
+        // ------------------------------------------------------------------
 
         stage('Login DockerHub') {
             steps {
@@ -294,83 +444,6 @@ pipeline {
                         -f "$WORKSPACE/docker-compose.yml" \
                         logs --tail=50
                 '''
-            }
-        }
-
-        // Acceptance control: runs the Ansible playbook that checks what the deploy
-        // stage just started, and fails the build when the playbook fails.
-        //
-        // The earlier version piped the playbook into `tee`. `set -e` only reacts to
-        // the exit status of the last command in a pipeline, and /bin/sh on this agent
-        // is dash, which has no `pipefail` option - so a missing ansible-playbook, a
-        // crashing playbook or a failed `assert` all produced a green build with an
-        // empty report. The status is captured explicitly here instead.
-        stage('Acceptance - Ansible Infrastructure Verification') {
-            steps {
-                sh '''
-                    set -eu
-
-                    mkdir -p "$WORKSPACE/reports"
-                    REPORT="$WORKSPACE/reports/ansible-acceptance-report.txt"
-                    PLAYBOOK_DIR="$WORKSPACE/ansible"
-
-                    # Prefer a native ansible-playbook. Until it is installed on the
-                    # agent, run the same playbook in a container and hand it the host's
-                    # Docker CLI and socket, so `docker info` and `docker inspect` still
-                    # see the containers the deploy stage started.
-                    if command -v ansible-playbook >/dev/null 2>&1; then
-                        echo "   ansible: $(ansible-playbook --version | head -n 1)"
-                        if ( cd "$PLAYBOOK_DIR" && ansible-playbook -i inventory.ini acceptance.yml ) > "$REPORT" 2>&1; then
-                            status=0
-                        else
-                            status=$?
-                        fi
-                    else
-                        DOCKER_BIN=$(command -v docker || true)
-                        DOCKER_BIN=$(readlink -f "${DOCKER_BIN:-/nonexistent}" 2>/dev/null || true)
-                        if [ -z "$DOCKER_BIN" ] || [ ! -x "$DOCKER_BIN" ]; then
-                            msg="FAIL: ansible-playbook is not installed and no docker CLI is available to fall back to."
-                            echo "$msg" > "$REPORT"
-                            echo "$msg"
-                            exit 1
-                        fi
-                        echo "   ansible-playbook not on the agent; running the playbook in python:3.12"
-                        if docker run --rm \
-                                -v "$PLAYBOOK_DIR:/work" \
-                                -w /work \
-                                -e HOME=/tmp \
-                                -v /var/run/docker.sock:/var/run/docker.sock \
-                                -v "$DOCKER_BIN:/usr/bin/docker:ro" \
-                                python:3.12 \
-                                sh -c 'pip install --quiet --no-cache-dir "ansible-core>=2.16,<2.19" && ansible-playbook -i inventory.ini acceptance.yml' \
-                                > "$REPORT" 2>&1; then
-                            status=0
-                        else
-                            status=$?
-                        fi
-                    fi
-
-                    echo "---- acceptance report ----"
-                    cat "$REPORT"
-                    echo "---------------------------"
-
-                    if [ "$status" -ne 0 ]; then
-                        echo "FAIL: acceptance verification failed (exit $status). See the report above."
-                        exit "$status"
-                    fi
-
-                    echo "   PASS: the playbook ran and every acceptance assertion held."
-                '''
-            }
-
-            post {
-                always {
-                    archiveArtifacts(
-                        artifacts: 'reports/ansible-acceptance-report.txt',
-                        allowEmptyArchive: true,
-                        fingerprint: true
-                    )
-                }
             }
         }
     }
