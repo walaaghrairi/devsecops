@@ -9,6 +9,14 @@ pipeline {
         githubPush()
     }
 
+    parameters {
+        string(
+            name: 'NOTIFY_TO',
+            defaultValue: '',
+            description: 'Address that receives the build summary email. Leave empty to disable notification.'
+        )
+    }
+
     stages {
 
         stage('Récupération du code source') {
@@ -529,6 +537,75 @@ pipeline {
                         allowEmptyArchive: true,
                         fingerprint: true
                     )
+                }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // Notification
+        // Last, so the mail describes a finished run: result, commit, and the
+        // control that covered each phase, with a link back to the build.
+        // A mail server problem is reported but never fails the build.
+        // ------------------------------------------------------------------
+        stage('Notify - Build Result by Email') {
+            steps {
+                script {
+                    def recipient = params.NOTIFY_TO?.trim()
+
+                    if (!recipient) {
+                        echo 'No recipient configured: set the NOTIFY_TO parameter to send the build summary.'
+                        return
+                    }
+
+                    def result = currentBuild.currentResult
+                    def shortCommit = env.GIT_COMMIT ? env.GIT_COMMIT.take(7) : 'unknown'
+
+                    def rows = [
+                        ['Pre-commit', 'Secret detection (detect-secrets)', 'Pre-Commit Controls (Secret Scan)'],
+                        ['Commit / CI', 'SAST, SCA and container scan', 'SAST - SpotBugs, SCA - OWASP Dependency-Check, Trivy Vulnerability Scan'],
+                        ['Acceptance', 'Staging stack verified by Ansible', 'Acceptance - Staging Deployment & Verification'],
+                        ['Production', 'Secrets management check', 'Secrets Management - Production Check'],
+                        ['Operations', 'Continuous monitoring (blackbox probe)', 'Operations - Continuous Monitoring (Blackbox)']
+                    ]
+
+                    def tableRows = rows.collect { phase, control, stage ->
+                        "<tr><td><b>${phase}</b></td><td>${control}</td><td><code>${stage}</code></td></tr>"
+                    }.join('')
+
+                    def body = """
+                        <html><body style="font-family:Segoe UI,Arial,sans-serif;color:#1f2328">
+                        <h2 style="margin-bottom:4px">DevSecOps pipeline &mdash; ${result}</h2>
+                        <p style="margin-top:0;color:#59636e">
+                          ${env.JOB_NAME} build <b>#${env.BUILD_NUMBER}</b> &middot; commit <code>${shortCommit}</code>
+                        </p>
+                        <table cellpadding="6" cellspacing="0" style="border-collapse:collapse;border:1px solid #d1d9e0;font-size:13px">
+                        <tr style="background:#f6f8fa">
+                          <th align="left">Phase</th><th align="left">Control</th><th align="left">Pipeline stage</th>
+                        </tr>
+                        ${tableRows}
+                        </table>
+                        <p style="font-size:13px">
+                        <a href="${env.BUILD_URL}">Open the build</a> &middot;
+                        <a href="${env.BUILD_URL}artifact/reports/">Download the reports</a>
+                        </p>
+                        <p style="font-size:12px;color:#59636e">
+                        Sent by Jenkins after a pipeline run. Change the recipient with the NOTIFY_TO build parameter.
+                        </p>
+                        </body></html>
+                        """
+
+                    try {
+                        mail(
+                            to: recipient,
+                            subject: "[${result}] ${env.JOB_NAME} #${env.BUILD_NUMBER} - ${shortCommit}",
+                            body: body,
+                            mimeType: 'text/html'
+                        )
+                        echo "Build summary emailed to ${recipient}."
+                    } catch (Exception exc) {
+                        echo "Email notification failed: ${exc.message}"
+                        echo 'Check Manage Jenkins > System > E-mail Notification (SMTP host, port, credentials).'
+                    }
                 }
             }
         }

@@ -1,8 +1,9 @@
 # DevSecOps maturity phases — controls and evidence
 
 One control per phase, all of them executing inside a single Jenkins pipeline
-(`Jenkinsfile`, 18 stages). Evidence below is taken from **build #37**, which ran
-commit `f464353` end to end and finished `SUCCESS`.
+(`Jenkinsfile`, 19 stages: 17 pipeline steps, the five phase controls, and a
+notification stage). Evidence below is taken from **build #37**, which ran commit
+`f464353` end to end and finished `SUCCESS`.
 
 ## The mapping
 
@@ -138,6 +139,19 @@ pipeline-able in this setup — they need an external attacker or a chaos target
 Monitoring is the control from the Operations column that genuinely runs in the
 pipeline.
 
+## Notification (not a phase control)
+
+The last stage, `Notify - Build Result by Email`, mails the outcome: result,
+job and build number, commit, and a table of the five phases with the stage that
+covers each, plus links to the build and to the downloaded reports.
+
+It is reporting, not a control — it does not gate anything. Recipient comes from
+the `NOTIFY_TO` build parameter; when it is empty the stage says so and sends
+nothing. A mail server problem is caught and logged, never a build failure.
+
+**Requires** Manage Jenkins → System → *E-mail Notification* (SMTP host, port,
+credentials) to be configured on the controller.
+
 ## Demo order (about five minutes)
 
 1. Open the Jenkinsfile on GitHub and show it is an ordered pipeline, not a bag of
@@ -160,3 +174,5 @@ pipeline.
   (`cron` would make it periodic, at the cost of redeploying nightly).
 - There are no unit tests in the repository (`-DskipTests=true`), and no SonarQube
   quality gate, so "Security Unit Tests" from the diagram column is not covered.
+- Email notification needs the `NOTIFY_TO` parameter set and an SMTP server
+  configured in Jenkins; it reports on a build, it does not gate one.
