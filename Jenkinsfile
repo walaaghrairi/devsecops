@@ -297,19 +297,69 @@ pipeline {
             }
         }
 
+        // Acceptance control: runs the Ansible playbook that checks what the deploy
+        // stage just started, and fails the build when the playbook fails.
+        //
+        // The earlier version piped the playbook into `tee`. `set -e` only reacts to
+        // the exit status of the last command in a pipeline, and /bin/sh on this agent
+        // is dash, which has no `pipefail` option - so a missing ansible-playbook, a
+        // crashing playbook or a failed `assert` all produced a green build with an
+        // empty report. The status is captured explicitly here instead.
         stage('Acceptance - Ansible Infrastructure Verification') {
-    steps {
-        sh '''
-            set -e
+            steps {
+                sh '''
+                    set -eu
 
                     mkdir -p "$WORKSPACE/reports"
+                    REPORT="$WORKSPACE/reports/ansible-acceptance-report.txt"
+                    PLAYBOOK_DIR="$WORKSPACE/ansible"
 
-                    cd "$WORKSPACE/ansible"
+                    # Prefer a native ansible-playbook. Until it is installed on the
+                    # agent, run the same playbook in a container and hand it the host's
+                    # Docker CLI and socket, so `docker info` and `docker inspect` still
+                    # see the containers the deploy stage started.
+                    if command -v ansible-playbook >/dev/null 2>&1; then
+                        echo "   ansible: $(ansible-playbook --version | head -n 1)"
+                        if ( cd "$PLAYBOOK_DIR" && ansible-playbook -i inventory.ini acceptance.yml ) > "$REPORT" 2>&1; then
+                            status=0
+                        else
+                            status=$?
+                        fi
+                    else
+                        DOCKER_BIN=$(command -v docker || true)
+                        DOCKER_BIN=$(readlink -f "${DOCKER_BIN:-/nonexistent}" 2>/dev/null || true)
+                        if [ -z "$DOCKER_BIN" ] || [ ! -x "$DOCKER_BIN" ]; then
+                            msg="FAIL: ansible-playbook is not installed and no docker CLI is available to fall back to."
+                            echo "$msg" > "$REPORT"
+                            echo "$msg"
+                            exit 1
+                        fi
+                        echo "   ansible-playbook not on the agent; running the playbook in python:3.12"
+                        if docker run --rm \
+                                -v "$PLAYBOOK_DIR:/work" \
+                                -w /work \
+                                -e HOME=/tmp \
+                                -v /var/run/docker.sock:/var/run/docker.sock \
+                                -v "$DOCKER_BIN:/usr/bin/docker:ro" \
+                                python:3.12 \
+                                sh -c 'pip install --quiet --no-cache-dir "ansible-core>=2.16,<2.19" && ansible-playbook -i inventory.ini acceptance.yml' \
+                                > "$REPORT" 2>&1; then
+                            status=0
+                        else
+                            status=$?
+                        fi
+                    fi
 
-                    ansible-playbook \
-                        -i inventory.ini \
-                        acceptance.yml \
-                        2>&1 | tee "$WORKSPACE/reports/ansible-acceptance-report.txt"
+                    echo "---- acceptance report ----"
+                    cat "$REPORT"
+                    echo "---------------------------"
+
+                    if [ "$status" -ne 0 ]; then
+                        echo "FAIL: acceptance verification failed (exit $status). See the report above."
+                        exit "$status"
+                    fi
+
+                    echo "   PASS: the playbook ran and every acceptance assertion held."
                 '''
             }
 
