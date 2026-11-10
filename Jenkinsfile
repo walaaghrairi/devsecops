@@ -159,6 +159,21 @@ pipeline {
 
         // SonarQube analyses target/classes, so it belongs after Compile and before
         // the artifact is packaged.
+        // Unit tests cover the code the analysers only inspect. A failing test
+        // fails the build, and JaCoCo writes target/site/jacoco/jacoco.xml, which
+        // the SonarQube stage imports so coverage is real instead of empty.
+        stage('Security Unit Tests - JUnit & JaCoCo') {
+            steps {
+                sh 'mvn -B test'
+            }
+            post {
+                always {
+                    junit testResults: 'target/surefire-reports/*.xml', allowEmptyResults: true
+                    archiveArtifacts artifacts: 'target/site/jacoco/**', allowEmptyArchive: true
+                }
+            }
+        }
+
         stage('SonarQube Analysis') {
             steps {
                 withSonarQubeEnv('SonarQube') {

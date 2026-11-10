@@ -1,16 +1,18 @@
 # DevSecOps maturity phases — controls and evidence
 
 One control per phase, all of them executing inside a single Jenkins pipeline
-(`Jenkinsfile`, 19 stages: 17 pipeline steps, the five phase controls, and a
+(`Jenkinsfile`, 20 stages: the five phase controls, their support stages, and a
 notification stage). Evidence below is taken from **build #37**, which ran commit
-`f464353` end to end and finished `SUCCESS`.
+`f464353` end to end and finished `SUCCESS`. The unit tests were added later and
+were verified locally on the same sources (JDK 17, `mvn -B test`): 27 tests, 0
+failures, 87% line coverage; the next Jenkins build shows the same stage output.
 
 ## The mapping
 
 | # | Phase (diagram column) | Control | Jenkins stage | Proof |
 |---|---|---|---|---|
 | 1 | Pre-commit | Secret detection (Yelp detect-secrets via pre-commit) | `Pre-Commit Controls (Secret Scan)` | Console: `Detect secrets ... Passed` |
-| 2 | Commit / CI | SAST (SpotBugs) + SCA (OWASP Dependency-Check) + container security (Trivy) | `SAST - SpotBugs`, `SCA - OWASP Dependency-Check`, `Trivy Vulnerability Scan` | 21 issues in SpotBugs trend, `dependency-check-report.html`, `Trivy Vulnerability Report` page |
+| 2 | Commit / CI | SAST (SpotBugs) + SCA (OWASP Dependency-Check) + container security (Trivy) + security unit tests (JUnit 5, coverage by JaCoCo) | `SAST - SpotBugs`, `SCA - OWASP Dependency-Check`, `Trivy Vulnerability Scan`, `Security Unit Tests - JUnit & JaCoCo` | 21 issues in SpotBugs trend, `dependency-check-report.html`, `Trivy Vulnerability Report` page, `Tests run: 27, Failures: 0` |
 | 3 | Acceptance | Infrastructure/acceptance verification of a staging stack (Ansible) | `Acceptance - Staging Deployment & Verification` | `staging application answered after 24s`, `PLAY RECAP ok=5 failed=0` |
 | 4 | Production | Secrets management check on the production credential source | `Secrets Management - Production Check` | `PASS: every required key is set and no tracked file contains its value.` |
 | 5 | Operations | Continuous monitoring of the running application (blackbox-exporter probe) | `Operations - Continuous Monitoring (Blackbox)` | `probe_success 1`, `probe_http_status_code 200`, archived `monitoring-probe.txt` |
@@ -48,6 +50,21 @@ Kubernetes manifests use `valueFrom.secretKeyRef`.
 - **Container security — Trivy** (`Trivy Vulnerability Scan`): OS packages and
   jars inside the built image plus secret scanning, published as a browsable
   `Trivy Vulnerability Report` and archived as `reports/trivy-report.json`.
+- **Security unit tests** (`Security Unit Tests - JUnit & JaCoCo`): 27 JUnit 5
+tests over the services and the REST controllers, with the repositories mocked,
+so they need neither a database nor a running Spring context. Unlike the three
+analysers above these *do* gate: a failing test fails the build. JaCoCo writes
+`target/site/jacoco/jacoco.xml`, and the SonarQube stage imports it, so the
+dashboard shows real coverage instead of none.
+
+```
+[INFO] Tests run: 27, Failures: 0, Errors: 0, Skipped: 0
+[INFO] --- jacoco:0.8.16:report (report) @ student-management ---
+[INFO] Analyzed bundle 'student-management' with 8 classes
+```
+
+**Show:** the `Security Unit Tests - JUnit & JaCoCo` stage (test count, JUnit
+trend in the sidebar), then the coverage figure SonarQube reports.
 
 **Show:** the `Trivy Vulnerability Report` link in the build sidebar (HTML, most
 visual), then the SpotBugs trend graph across builds.
@@ -156,14 +173,17 @@ credentials) to be configured on the controller.
 
 1. Open the Jenkinsfile on GitHub and show it is an ordered pipeline, not a bag of
    tools — point at the phase comment banners.
-2. Open build #37, stage view, and scroll right end to end: the order is
-   pre-commit → CI checks → acceptance → secrets → deploy → monitoring.
+2. Open the latest green build, stage view, and scroll right end to end: the order
+   is pre-commit → CI checks → unit tests → acceptance → secrets → deploy →
+   monitoring.
 3. Pre-commit: the `Passed` line.
 4. CI: `Trivy Vulnerability Report` (visual) and the SpotBugs trend.
-5. Acceptance: the Ansible recap with the `acceptance-*` container names.
-6. Production: the secrets `PASS` line.
-7. Operations: the probe output with `probe_success 1`.
-8. Close on the mapping table above.
+5. Unit tests: `Tests run: 27, Failures: 0` and the coverage number SonarQube
+   shows for the project.
+6. Acceptance: the Ansible recap with the `acceptance-*` container names.
+7. Production: the secrets `PASS` line.
+8. Operations: the probe output with `probe_success 1`.
+9. Close on the mapping table above.
 
 ## Limits worth stating before they are asked
 
@@ -176,7 +196,13 @@ credentials) to be configured on the controller.
 - The monitoring probe runs per build, not on a timer. The exporter is a
   long-running service, but Jenkins only queries it during a pipeline run
   (`cron` would make it periodic, at the cost of redeploying nightly).
-- There are no unit tests in the repository (`-DskipTests=true`), and no SonarQube
-  quality gate, so "Security Unit Tests" from the diagram column is not covered.
+- Coverage is measured, not enforced: there is no minimum threshold in JaCoCo and
+  no `waitForQualityGate` step, so a drop in coverage does not fail the build.
+- JaCoCo excludes the Lombok-generated entity code, so coverage is reported over
+  the three services and three controllers; `StudentManagementApplication` (the
+  `main` method) is counted and stays at 0%. That is why the reported percentage
+  is over 8 classes and not over every line of the project.
+- The tests are unit tests with mocked repositories; they do not exercise the
+  MySQL schema, so they are not an integration test of the persistence layer.
 - Email notification needs the `NOTIFY_TO` parameter set and an SMTP server
   configured in Jenkins; it reports on a build, it does not gate one.

@@ -79,6 +79,29 @@
             </configuration>
         </plugin>
 
+        <!-- JaCoCo: measures what the unit tests actually exercise and writes
+             target/site/jacoco/jacoco.xml for the SonarQube stage to import. -->
+        <plugin>
+            <groupId>org.jacoco</groupId>
+            <artifactId>jacoco-maven-plugin</artifactId>
+            <version>0.8.16</version>
+            <executions>
+                <execution>
+                    <id>prepare-agent</id>
+                    <goals>
+                        <goal>prepare-agent</goal>
+                    </goals>
+                </execution>
+                <execution>
+                    <id>report</id>
+                    <phase>test</phase>
+                    <goals>
+                        <goal>report</goal>
+                    </goals>
+                </execution>
+            </executions>
+        </plugin>
+
         <!-- SpotBugs Plugin -->
         <plugin>
             <groupId>com.github.spotbugs</groupId>
