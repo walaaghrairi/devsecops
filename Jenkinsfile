@@ -605,8 +605,19 @@ pipeline {
                         ['Operations', 'Continuous monitoring (blackbox probe)', 'Operations - Continuous Monitoring (Blackbox)']
                     ]
 
-                    def tableRows = rows.collect { phase, control, stage ->
-                        "<tr><td><b>${phase}</b></td><td>${control}</td><td><code>${stage}</code></td></tr>"
+                    // Index the row explicitly: destructuring a List across several
+                    // closure parameters does not happen here, so the whole row was
+                    // printed in the first column and the other two came out null.
+                    def escape = { value ->
+                        (value ?: '').toString()
+                            .replace('&', '&amp;')
+                            .replace('<', '&lt;')
+                            .replace('>', '&gt;')
+                    }
+
+                    def tableRows = rows.collect { row ->
+                        "<tr><td><b>${escape(row[0])}</b></td><td>${escape(row[1])}</td>" +
+                            "<td><code>${escape(row[2])}</code></td></tr>"
                     }.join('')
 
                     def body = """
