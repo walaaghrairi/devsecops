@@ -89,15 +89,52 @@ pipeline {
                 ]) {
                     sh '''
                         set +x
-                        mvn -B org.owasp:dependency-check-maven:13.0.0:check \
-                            -DnvdApiKey="$NVD_API_KEY"
+                        set -u
+
+                        LOG="$WORKSPACE/reports/dependency-check.log"
+                        REPORT="$WORKSPACE/target/dependency-check-report.html"
+                        mkdir -p "$WORKSPACE/reports"
+
+                        scan() {
+                            mvn -B org.owasp:dependency-check-maven:13.0.0:check \
+                                -DnvdApiKey="$NVD_API_KEY" \
+                                -DfailOnError=false "$@" > "$LOG" 2>&1
+                        }
+
+                        # The stage reports, it does not gate: a CVE does not fail the
+                        # build here. But the NVD feed being unreachable used to abort
+                        # the whole pipeline even though the analysis still produced a
+                        # report, so analysis errors are downgraded to warnings.
+                        status=0
+                        scan || status=$?
+
+                        # No report at all means the control produced no evidence.
+                        # Retry once against the cached CVE database before giving up.
+                        if [ ! -s "$REPORT" ]; then
+                            echo "   No report produced; retrying without the NVD update (cached data only)."
+                            status=0
+                            scan -DautoUpdate=false || status=$?
+                        fi
+
+                        cat "$LOG"
+
+                        if grep -q "Unable to update 1 or more Cached Web DataSource" "$LOG" 2>/dev/null; then
+                            echo "   WARNING: the NVD feed could not be reached; results are based on cached CVE data."
+                        fi
+
+                        if [ -s "$REPORT" ]; then
+                            echo "   Report written: target/dependency-check-report.html"
+                        else
+                            echo "   FAIL: dependency-check produced no report (exit $status)."
+                            exit 1
+                        fi
                     '''
                 }
             }
             post {
                 always {
                     archiveArtifacts(
-                        artifacts: 'target/dependency-check-report.html',
+                        artifacts: 'target/dependency-check-report.html, reports/dependency-check.log',
                         allowEmptyArchive: true
                     )
                 }

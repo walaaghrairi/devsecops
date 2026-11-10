@@ -169,6 +169,10 @@ credentials) to be configured on the controller.
 
 - Trivy, Dependency-Check and SpotBugs are report-only; the build is green with
   known CVEs in Spring Boot, Tomcat and Swagger UI.
+- If the NVD feed is unreachable, Dependency-Check falls back to its cached CVE
+  database and logs a warning instead of failing the pipeline, so results can lag
+  behind the newest disclosures until the feed recovers. A run that produces no
+  report at all still fails the stage.
 - The monitoring probe runs per build, not on a timer. The exporter is a
   long-running service, but Jenkins only queries it during a pipeline run
   (`cron` would make it periodic, at the cost of redeploying nightly).
